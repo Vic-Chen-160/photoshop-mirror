@@ -1,0 +1,7 @@
+.DS_Store
+__pycache__/
+*.pyc
+# Generator output and design files never belong in this repo
+*-assets/
+*.psd
+*.psb

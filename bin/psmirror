@@ -1,0 +1,139 @@
+#!/bin/zsh
+# psmirror — live-preview Photoshop designs on your phone, over Wi-Fi
+#
+# Usage:
+#   psmirror <a.psd> [b.psd ...]   watch one or more PSDs
+#   psmirror <folder>              watch every *-assets folder found below it
+#   psmirror                       reuse the last sources
+#   psmirror ... --port 8080       use another port (default 8000, auto +1 if taken)
+#   psmirror ... --local           PSD on a network drive: keep Generator output on local disk
+#   psmirror ... --depth 5         how deep to look for *-assets (default 3)
+#   psmirror ... --new-token       issue a new private URL (old links stop working)
+#   psmirror ... --no-token        serve without the private token (anyone on the LAN can view)
+#   psmirror --clean [--yes]       list / remove orphaned local asset folders
+#
+# Why --local:
+#   Generator renders into a local temp folder, then rename()s the file into -assets.
+#   rename() cannot cross filesystems (EXDEV), so with the PSD on a NAS/SMB share every
+#   write fails. --local turns <name>-assets into a symlink to ~/.psmirror/assets/…:
+#   Generator sees the same path, the files land on local disk, and rename() works.
+
+set -e
+
+LIB="${0:A:h:h}/libexec"
+export PSMIRROR_HOME="${PSMIRROR_HOME:-$HOME/.psmirror}"
+LAST="$PSMIRROR_HOME/last"
+TOKEN_FILE="$PSMIRROR_HOME/token"
+PORT=8000
+
+[[ -f "$LIB/serve.py" && -f "$LIB/preview.html" ]] || { print -u2 "Missing files in $LIB — reinstall photoshop-mirror"; exit 1; }
+command -v python3 >/dev/null || { print -u2 "python3 not found. Run: xcode-select --install"; exit 1; }
+mkdir -p "$PSMIRROR_HOME"
+
+# --- arguments ---
+typeset -a TARGETS
+while (( $# )); do
+  case "$1" in
+    --port|-p)   PORT="$2"; shift 2 ;;
+    --local)     LOCAL=1; shift ;;
+    --depth)     DEPTH="$2"; shift 2 ;;
+    --new-token) NEW_TOKEN=1; shift ;;
+    --no-token)  NO_TOKEN=1; shift ;;
+    --clean)     shift; exec python3 "$LIB/clean.py" "$@" ;;
+    -h|--help)   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*)          print -u2 "Unknown option: $1 (see psmirror -h)"; exit 1 ;;
+    *)           TARGETS+=("$1"); shift ;;
+  esac
+done
+
+# --- no targets: reuse last time ---
+if (( ${#TARGETS} == 0 )); then
+  if [[ -s "$LAST" ]]; then
+    TARGETS=("${(f)$(<$LAST)}")
+    print "  (reusing ${#TARGETS} source(s) from last time)"
+  else
+    TARGETS=("$PWD")
+  fi
+fi
+
+# --- turn each target into a folder to watch ---
+typeset -a DIRS
+for T in "${TARGETS[@]}"; do
+  [[ -n "$T" ]] || continue
+  if [[ "$T" == *.psd || "$T" == *.psb ]]; then
+    # Dragging a file from Finder into Terminal escapes it (\[ \] \ ). If it is also
+    # wrapped in quotes, the backslashes become literal and `mkdir -p` below would build
+    # a fake directory tree: Generator writes to the real -assets, we watch the fake one,
+    # and it looks like "no images ever arrive".
+    if [[ ! -f "$T" ]]; then
+      U="${T//\\/}"
+      if [[ -f "$U" ]]; then
+        print "  ℹ️  Removed backslash escapes from the path (when dragging a file in, don't add quotes)"
+        T="$U"
+      else
+        print -u2 "  ⚠️  Skipped (file not found): $T"
+        continue
+      fi
+    fi
+    D="${T%.*}-assets"
+    [[ -d "$D" ]] || mkdir -p "$D"      # create it now; Generator will write into it
+    # Generator's rename() fails across filesystems — redirect to local disk
+    if OUT=$(python3 "$LIB/localize.py" "$D" ${LOCAL:+--apply} 2>&1); then
+      [[ -n "$OUT" ]] && print "$OUT"
+      [[ -n "$LOCAL" ]] && D=$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$D")
+    fi
+  elif [[ -d "$T" ]]; then
+    D="$T"
+  else
+    print -u2 "  ⚠️  Skipped (not found): $T"
+    continue
+  fi
+  DIRS+=("${D:A}")
+done
+
+(( ${#DIRS} )) || { print -u2 "No valid sources"; exit 1; }
+
+# remember for next time
+print -rl -- "${DIRS[@]}" > "$LAST"
+
+# --- private token: kept between runs so a bookmarked URL keeps working ---
+TOKEN=""
+if [[ -z "$NO_TOKEN" ]]; then
+  if [[ -n "$NEW_TOKEN" || ! -s "$TOKEN_FILE" ]]; then
+    python3 -c "import secrets;print(secrets.token_urlsafe(6))" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+  fi
+  TOKEN=$(<"$TOKEN_FILE")
+fi
+
+# --- find a free port ---
+while lsof -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; do
+  PORT=$((PORT+1))
+done
+
+# --- LAN IP: the default-route interface first, then the usual suspects ---
+IP=""
+for i in $(route -n get default 2>/dev/null | awk '/interface:/{print $2}') en0 en1 en2; do
+  IP=$(ipconfig getifaddr $i 2>/dev/null) && [[ -n "$IP" ]] && break
+done
+[[ -n "$IP" ]] || IP="localhost"
+
+URL="http://$IP:$PORT/${TOKEN:+$TOKEN/}"
+
+print ""
+for D in "${DIRS[@]}"; do
+  print "  \033[1mWatching\033[0m  ${D/#$HOME/~}"
+done
+print "  \033[1mPhone\033[0m     \033[1;36m$URL\033[0m"
+[[ -n "$NO_TOKEN" ]] && print "  \033[33m⚠️  No token: anyone on this network can view your designs\033[0m"
+print ""
+if command -v qrencode >/dev/null 2>&1; then
+  qrencode -t ANSIUTF8 -m 2 "$URL"
+else
+  print "  (for a QR code: brew install qrencode)"
+  print ""
+fi
+print "  Ctrl+C to stop"
+print ""
+
+exec python3 "$LIB/serve.py" "$PORT" ${TOKEN:+--token=$TOKEN} ${LOCAL:+--local} ${DEPTH:+--depth=$DEPTH} "${DIRS[@]}"

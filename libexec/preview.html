@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Photoshop Mirror</title>
+<style>
+  :root{
+    --ui:rgba(22,22,26,.9);
+    --ui-line:rgba(255,255,255,.12);
+    --fg:rgba(255,255,255,.92);
+    --fg-dim:rgba(255,255,255,.45);
+    --ok:#3ddc84;
+    --bad:#ff5f56;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#101012;overscroll-behavior:none}
+  body{
+    font:500 13px/1.4 -apple-system,"SF Pro Text","PingFang TC",system-ui,sans-serif;
+    color:var(--fg);
+  }
+
+  /* ---- canvas ---- */
+  #stage{
+    position:fixed;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    overflow:auto;-webkit-overflow-scrolling:touch;
+  }
+  #stage.bg-dark{background:#101012}
+  #stage.bg-light{background:#f2f2f4}
+  #stage.bg-checker{
+    background-color:#8a8a8e;
+    background-image:
+      linear-gradient(45deg,#6f6f74 25%,transparent 25%,transparent 75%,#6f6f74 75%),
+      linear-gradient(45deg,#6f6f74 25%,transparent 25%,transparent 75%,#6f6f74 75%);
+    background-size:20px 20px;background-position:0 0,10px 10px;
+  }
+  #shot{display:block}
+  body[data-mode="fit"]    #shot{max-width:100vw;max-height:100vh}
+  body[data-mode="width"]  #stage{align-items:flex-start}
+  body[data-mode="width"]  #shot{width:100vw;height:auto;max-width:none}
+  body[data-mode="actual"] #stage{align-items:flex-start;justify-content:flex-start}
+  body[data-mode="actual"] #shot{width:auto;height:auto;max-width:none;max-height:none}
+
+  #empty{
+    position:fixed;inset:0;display:none;
+    align-items:center;justify-content:center;text-align:center;
+    padding:32px;color:var(--fg-dim);line-height:1.9;
+  }
+  #empty b{display:block;color:var(--fg);font-size:15px;margin-bottom:10px}
+  #empty code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+    background:rgba(255,255,255,.08);padding:2px 6px;border-radius:5px;
+  }
+
+  /* ---- top bar ---- */
+  #bar{
+    position:fixed;top:0;left:0;right:0;z-index:10;
+    padding:max(8px,env(safe-area-inset-top)) 10px 8px;
+    display:flex;gap:8px;align-items:center;
+    background:linear-gradient(to bottom,rgba(0,0,0,.6),transparent);
+    transition:opacity .25s ease,transform .25s ease;
+  }
+  #bar.hide{opacity:0;transform:translateY(-8px);pointer-events:none}
+  .chip{
+    appearance:none;border:1px solid var(--ui-line);background:var(--ui);
+    color:var(--fg);font:inherit;font-size:12px;
+    padding:7px 11px;border-radius:999px;
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);white-space:nowrap;
+  }
+  .chip:active{background:rgba(60,60,66,.9)}
+  #pick{max-width:46vw;overflow:hidden;text-overflow:ellipsis;text-align:left}
+  #pick small{color:var(--fg-dim);font-size:11px}
+  #dot{
+    width:7px;height:7px;border-radius:50%;background:var(--bad);
+    flex:0 0 auto;margin-left:auto;box-shadow:0 0 0 3px rgba(0,0,0,.35);
+  }
+  #dot.live{background:var(--ok)}
+  #meta{font-size:11px;color:var(--fg-dim);font-variant-numeric:tabular-nums}
+
+  /* ---- picker sheet ---- */
+  #sheet{
+    position:fixed;inset:0;z-index:30;display:none;
+    background:rgba(0,0,0,.5);
+    backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+  }
+  #sheet.open{display:block}
+  #sheetInner{
+    position:absolute;left:8px;right:8px;
+    bottom:calc(8px + env(safe-area-inset-bottom));
+    max-height:76vh;overflow:auto;-webkit-overflow-scrolling:touch;
+    background:var(--ui);border:1px solid var(--ui-line);border-radius:16px;
+    backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);
+    padding:6px;
+  }
+  .grp{
+    font-size:11px;color:var(--fg-dim);letter-spacing:.04em;
+    padding:12px 12px 6px;
+  }
+  .item{
+    display:flex;align-items:center;gap:10px;
+    padding:12px;border-radius:10px;font-size:14px;
+  }
+  .item:active{background:rgba(255,255,255,.08)}
+  .item.on{background:rgba(255,255,255,.12)}
+  .item .tick{width:14px;color:var(--ok);flex:0 0 auto}
+  .item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ---- toast ---- */
+  #toast{
+    position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom));
+    transform:translateX(-50%) translateY(6px);z-index:20;
+    background:var(--ui);border:1px solid var(--ui-line);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    padding:8px 14px;border-radius:999px;font-size:12px;
+    opacity:0;transition:opacity .2s ease,transform .2s ease;pointer-events:none;
+  }
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body data-mode="fit">
+
+<div id="stage" class="bg-dark"><img id="shot" alt=""></div>
+
+<div id="empty">
+  <div>
+    <b data-t="emptyTitle"></b>
+    <div id="emptyWhere"></div>
+    <div style="margin-top:14px" data-t="emptyHelp"></div>
+  </div>
+</div>
+
+<div id="bar">
+  <button class="chip" id="pick">—</button>
+  <button class="chip" id="mode"></button>
+  <button class="chip" id="bg" data-t="bg"></button>
+  <div id="dot"></div>
+  <div id="meta" data-t="connecting"></div>
+</div>
+
+<div id="sheet"><div id="sheetInner"></div></div>
+<div id="toast"></div>
+
+<script>
+const I18N = {
+  en: {
+    fit:"Fit", width:"Full width", actual:"1:1 pixels",
+    dark:"Dark", light:"Light", checker:"Checker", bg:"Background",
+    connecting:"Connecting", offline:"Offline", waiting:"Waiting",
+    onlyOne:"Only one image so far", lastScan:"Last scan",
+    emptyTitle:"Connected, but there are no images in the watched folders",
+    emptyHelp:`Photoshop has usually stopped exporting. Check in order:<br>
+      1. Is <code>File &gt; Generate &gt; Image Assets</code> still ticked?<br>
+      2. Does the artboard name end in <code>.png</code>?<br>
+      3. Untick and re-tick Image Assets to force a re-export`
+  },
+  zh: {
+    fit:"符合畫面", width:"滿版寬度", actual:"1:1 像素",
+    dark:"深", light:"淺", checker:"透明格", bg:"底色",
+    connecting:"連線中", offline:"失去連線", waiting:"等待中",
+    onlyOne:"目前只有一張圖", lastScan:"最後掃描",
+    emptyTitle:"已連上伺服器，但監看的資料夾裡沒有圖",
+    emptyHelp:`通常是 Photoshop 那邊停了。依序檢查：<br>
+      1. <code>檔案 &gt; 產生 &gt; 影像資源</code> 的勾還在嗎<br>
+      2. 工作區域名稱有沒有 <code>.png</code> 結尾<br>
+      3. 取消再重勾一次「影像資源」，強迫它重吐`
+  }
+};
+const T = /^zh/i.test(navigator.language) ? I18N.zh : I18N.en;
+document.documentElement.lang = T===I18N.zh ? "zh-Hant" : "en";
+document.querySelectorAll("[data-t]").forEach(el=>el.innerHTML=T[el.dataset.t]);
+
+const MODES = [["fit",T.fit],["width",T.width],["actual",T.actual]];
+const BGS   = [["bg-dark",T.dark],["bg-light",T.light],["bg-checker",T.checker]];
+
+const $ = s => document.querySelector(s);
+const stage=$("#stage"), shot=$("#shot"), bar=$("#bar"), dot=$("#dot"), meta=$("#meta"),
+      pickBtn=$("#pick"), modeBtn=$("#mode"), bgBtn=$("#bg"), empty=$("#empty"),
+      sheet=$("#sheet"), sheetInner=$("#sheetInner"), toastEl=$("#toast");
+
+let items=[];            // [{key,url,name,group}]
+let current=null;        // key
+let sig=null, modeI=0, bgI=0, misses=0, groups=0;
+
+/* ---------- helpers ---------- */
+let toastT;
+function toast(m){
+  toastEl.textContent=m; toastEl.classList.add("show");
+  clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove("show"),1400);
+}
+let barT;
+function showBar(){
+  bar.classList.remove("hide");
+  clearTimeout(barT); barT=setTimeout(()=>bar.classList.add("hide"),2800);
+}
+function live(on){ dot.classList.toggle("live",on); if(!on) meta.textContent=T.offline; }
+function stamp(){
+  const d=new Date();
+  meta.textContent=[d.getHours(),d.getMinutes(),d.getSeconds()]
+    .map(n=>String(n).padStart(2,"0")).join(":");
+}
+const cur = () => items.find(i=>i.key===current);
+
+/* ---------- discover sources and images ---------- */
+async function scan(){
+  const r = await fetch("__list?t="+Date.now(),{cache:"no-store"});
+  const data = await r.json();
+  const srcs = data.sources || [];
+  const next=[];
+  for(const s of srcs)
+    for(const f of s.files)
+      next.push({
+        key: s.slug+"/"+f,
+        url: "f/"+s.slug+"/"+encodeURIComponent(f),
+        name: f, group: s.label
+      });
+
+  const changed = next.map(i=>i.key).join("|") !== items.map(i=>i.key).join("|");
+  items=next; groups=srcs.length;
+
+  if(!items.length){
+    empty.style.display="flex"; shot.removeAttribute("src"); current=null;
+    $("#emptyWhere").innerHTML =
+      (data.watching||[]).map(w=>`<div style="margin-top:6px"><code>${esc(w)}</code></div>`).join("")
+      + `<div style="margin-top:10px;font-size:11px">${T.lastScan} ${esc(data.scanned||"—")}</div>`;
+    live(true); stamp(); return;
+  }
+  empty.style.display="none";
+
+  if(!current || !items.some(i=>i.key===current)){
+    // Prefer the image viewed last time, then one named *preview*, then the first
+    const want=localStorage.psmirrorLast;
+    current = (items.find(i=>i.key===want)
+            || items.find(i=>/preview/i.test(i.name))
+            || items[0]).key;
+    sig=null;
+  }
+  if(changed){ paintBtn(); if(sheet.classList.contains("open")) paintSheet(); }
+}
+
+function paintBtn(){
+  const c=cur(); if(!c) return;
+  pickBtn.innerHTML = groups>1
+    ? `${c.name} <small>· ${c.group}</small>`
+    : c.name + (items.length>1 ? ` <small>${items.indexOf(c)+1}/${items.length}</small>` : "");
+}
+
+/* ---------- detect when Generator rewrites the image ---------- */
+async function poll(){
+  try{
+    const c=cur();
+    if(!c){ await scan(); live(true); if(!cur()) meta.textContent=T.waiting; return; }
+    const r = await fetch(c.url+"?t="+Date.now(),{method:"HEAD",cache:"no-store"});
+    if(!r.ok){ sig=null; await scan(); return; }
+    const s=(r.headers.get("Last-Modified")||"")+"|"+(r.headers.get("Content-Length")||"");
+    live(true); misses=0;
+    if(s!==sig){ sig=s; swap(c); }
+  }catch(e){ if(++misses>2) live(false); }
+}
+
+function swap(c){
+  const im=new Image();
+  im.onload=()=>{ shot.src=im.src; stamp(); };
+  im.onerror=()=>{ sig=null; };
+  im.src=c.url+"?t="+Date.now();
+}
+
+function select(key){
+  current=key; sig=null;
+  localStorage.psmirrorLast=key;
+  paintBtn(); poll();
+}
+
+/* ---------- picker ---------- */
+function paintSheet(){
+  const byGroup=new Map();
+  for(const i of items){
+    if(!byGroup.has(i.group)) byGroup.set(i.group,[]);
+    byGroup.get(i.group).push(i);
+  }
+  let html="";
+  for(const [g,list] of byGroup){
+    if(groups>1) html+=`<div class="grp">${esc(g)}</div>`;
+    for(const i of list)
+      html+=`<div class="item${i.key===current?" on":""}" data-k="${esc(i.key)}">
+               <span class="tick">${i.key===current?"✓":""}</span>
+               <span class="nm">${esc(i.name)}</span>
+             </div>`;
+  }
+  sheetInner.innerHTML=html;
+}
+function esc(s){ return s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+pickBtn.onclick=e=>{
+  e.stopPropagation(); showBar();
+  if(items.length<2) return toast(T.onlyOne);
+  paintSheet(); sheet.classList.add("open");
+};
+sheet.onclick=e=>{
+  const el=e.target.closest(".item");
+  if(el){ select(el.dataset.k); toast(cur().name); }
+  sheet.classList.remove("open");
+};
+
+modeBtn.onclick=e=>{
+  e.stopPropagation(); showBar();
+  modeI=(modeI+1)%MODES.length;
+  document.body.dataset.mode=MODES[modeI][0];
+  modeBtn.textContent=MODES[modeI][1];
+  localStorage.psmirrorMode=modeI; toast(MODES[modeI][1]);
+};
+bgBtn.onclick=e=>{
+  e.stopPropagation(); showBar();
+  bgI=(bgI+1)%BGS.length;
+  stage.className=BGS[bgI][0];
+  localStorage.psmirrorBg=bgI; toast(T.bg+": "+BGS[bgI][1]);
+};
+document.addEventListener("click",showBar);
+document.addEventListener("touchstart",showBar,{passive:true});
+
+/* ---------- start ---------- */
+modeI=+(localStorage.psmirrorMode??0); document.body.dataset.mode=MODES[modeI][0];
+modeBtn.textContent=MODES[modeI][1];
+bgI=+(localStorage.psmirrorBg??0); stage.className=BGS[bgI][0];
+
+scan().then(()=>{ paintBtn(); poll(); });
+setInterval(poll,600);
+setInterval(()=>scan().catch(()=>{}),3000);
+showBar();
+</script>
+</body>
+</html>
