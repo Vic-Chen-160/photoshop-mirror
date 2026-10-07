@@ -6,8 +6,7 @@
 
 手機不用裝 App，Photoshop 不用裝外掛，也不用註冊帳號。Mac 上打一行指令，手機開瀏覽器就能看。
 
-<!-- TODO: 示範 GIF —— 左邊 Photoshop、右邊手機同步更新 -->
-<!-- ![demo](docs/demo.gif) -->
+[![photoshop-mirror demo](docs/demo.gif)](docs/demo.mp4)
 
 ## 為什麼做這個
 

@@ -6,8 +6,7 @@ See your Photoshop design on your phone, live, while you work. Every time you ed
 
 No phone app. No plugin. No account. One command on your Mac and a browser on your phone.
 
-<!-- TODO: demo GIF — Photoshop on the left, phone updating on the right -->
-<!-- ![demo](docs/demo.gif) -->
+[![photoshop-mirror demo](docs/demo.gif)](docs/demo.mp4)
 
 ## Why
 

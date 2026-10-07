@@ -1,0 +1,8 @@
+{
+  "name": "photoshop-mirror-demo",
+  "private": true,
+  "description": "Renders docs/demo.mp4 and docs/demo.gif from scene.html",
+  "type": "module",
+  "scripts": { "render": "node render.mjs" },
+  "devDependencies": { "puppeteer-core": "^24.0.0" }
+}
